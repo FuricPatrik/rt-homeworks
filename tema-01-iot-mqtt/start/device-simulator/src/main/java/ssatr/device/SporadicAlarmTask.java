@@ -1,5 +1,6 @@
 package ssatr.device;
 
+import java.util.Locale;
 import java.util.concurrent.BlockingQueue;
 
 /**
@@ -18,24 +19,44 @@ public class SporadicAlarmTask implements Runnable {
     private final String deviceId;
     private final MqttConnection mqtt;
     private final BlockingQueue<Double> alarmEvents;
+    private PeriodicTelemetryTask periodic;
 
-    public SporadicAlarmTask(String deviceId, MqttConnection mqtt, BlockingQueue<Double> alarmEvents) {
+    public SporadicAlarmTask(String deviceId, MqttConnection mqtt, BlockingQueue<Double> alarmEvents, PeriodicTelemetryTask periodic) {
         this.deviceId = deviceId;
         this.mqtt = mqtt;
         this.alarmEvents = alarmEvents;
+        this.periodic=periodic;
     }
 
     @Override
     public void run() {
-        // TODO 2: implementați taskul sporadic:
-        //   - așteptați un eveniment: alarmEvents.take()
-        //   - dacă de la ultima eliberare au trecut mai puțin de
-        //     MIN_INTERARRIVAL_MS, respingeți evenimentul (afișați un mesaj)
-        //   - altfel publicați pe Config.alarmTopic(deviceId) mesajul
-        //     "deviceId;timestamp;temperatura;prag"
-        //     (pragul curent poate fi transmis împreună cu temperatura sau
-        //      citit din PeriodicTelemetryTask; alegeți și justificați în raport)
-        //
-        // Vezi exemplul exemple/01-taskuri/.../SporadicTaskExample.java
+        long lastReleaseTime = 0;
+
+        try {
+            while (true) {
+                // Task-ul adoarme așteptând un eveniment (blocant)
+                Double temp = alarmEvents.take();
+                long currentTime = System.currentTimeMillis();
+
+                // Verificăm dacă a trecut intervalul minim de protecție împotriva inundării brokerului
+                if (currentTime - lastReleaseTime < MIN_INTERARRIVAL_MS) {
+                    System.out.println("Alarma respinsa (inundare): " + temp);
+                    continue; // respingem și ne întoarcem la așteptat
+                }
+
+                lastReleaseTime = currentTime;
+
+                // Preluăm pragul curent din celălalt task (așa cum menționa cerința)
+                double currentThreshold = periodic.getThreshold();
+
+                // Publicăm mesajul de alarmă cu pragul curent
+                String payload = String.format(Locale.US, "%s;%d;%.2f;%.2f", deviceId, currentTime, temp, currentThreshold);
+                mqtt.publish(Config.alarmTopic(deviceId), payload);
+                System.out.println("[ALARM START] Trimis: " + payload);
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            System.out.println("SporadicAlarmTask a fost intrerupt.");
+        }
     }
 }

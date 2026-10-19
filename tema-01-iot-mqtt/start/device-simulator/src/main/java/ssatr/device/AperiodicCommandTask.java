@@ -37,14 +37,54 @@ public class AperiodicCommandTask implements Runnable {
 
     @Override
     public void run() {
-        // TODO 3: implementați taskul aperiodic:
-        //   - preluați comenzile din coadă: commands.take()
-        //   - separați numele comenzii de parametru: command.split(" ")
-        //   - executați comanda (periodic.setPeriodMs(...), sensor.reset() etc.)
-        //   - publicați confirmarea pe Config.statusTopic(deviceId)
-        //   - o comandă necunoscută sau un parametru invalid nu trebuie să
-        //     oprească taskul: publicați "ERROR <motiv>"
-        //
-        // Vezi exemplul exemple/01-taskuri/.../AperiodicTaskExample.java
+        try {
+            while (true) {
+                // Așteaptă asincron sosirea unei comenzi
+                String commandStr = commands.take();
+                // Elimină eventualele spații în plus din stânga/dreapta și le desparte
+                String[] parts = commandStr.trim().split("\\s+");
+                String action = parts[0].toUpperCase();
+                String responseText;
+
+                try {
+                    switch (action) {
+                        case "SET_INTERVAL":
+                            if (parts.length < 2) throw new IllegalArgumentException("Lipseste parametrul ms");
+                            long interval = Long.parseLong(parts[1]);
+                            periodic.setPeriodMs(interval);
+                            responseText = "OK " + commandStr;
+                            break;
+                        case "SET_THRESHOLD":
+                            if (parts.length < 2) throw new IllegalArgumentException("Lipseste valoarea");
+                            double threshold = Double.parseDouble(parts[1]);
+                            periodic.setThreshold(threshold);
+                            responseText = "OK " + commandStr;
+                            break;
+                        case "RESET":
+                            sensor.reset();
+                            responseText = "OK " + commandStr;
+                            break;
+                        case "STATUS":
+                            responseText = "STATUS interval=" + periodic.getPeriodMs() + " threshold=" + periodic.getThreshold();
+                            break;
+                        default:
+                            responseText = "ERROR Comanda necunoscuta: " + action;
+                            break;
+                    }
+                } catch (Exception e) {
+                    responseText = "ERROR Parametru invalid pentru " + action;
+                }
+
+                // Generăm timestamp și publicăm pe topicul de confirmări
+                long timestamp = System.currentTimeMillis();
+                String statusPayload = deviceId + ";" + timestamp + ";" + responseText;
+
+                mqtt.publish(Config.statusTopic(deviceId), statusPayload);
+                System.out.println("[COMMAND STATUS] " + statusPayload);
+            }
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            System.out.println("AperiodicCommandTask a fost intrerupt.");
+        }
     }
 }
